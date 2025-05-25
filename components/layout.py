@@ -27,11 +27,19 @@ def create_header() -> html.Div:
     
     return html.Div([
         html.Div([
-            # Left side - title
+            # Left side - logos and title exactly like RUW
             html.Div([
+                html.Img(
+                    src="/static/HCSS_Beeldmerk_Blauw_RGB.svg",
+                    style={'height': '40px', 'marginRight': '15px'}
+                ),
+                html.Img(
+                    src="/static/rubase_logo_4.svg", 
+                    style={'height': '40px', 'marginRight': '15px'}
+                ),
                 html.H2("Cognitive Warfare Data Analysis Dashboard", 
                        style={'margin': 0, 'color': 'white'})
-            ], style={'flex': '1'}),
+            ], style={'flex': '1', 'display': 'flex', 'alignItems': 'center'}),
             
             # Right side - buttons
             html.Div([

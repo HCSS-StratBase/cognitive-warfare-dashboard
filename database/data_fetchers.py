@@ -91,18 +91,19 @@ def fetch_category_data(
     try:
         engine = get_engine()
         
-        # Build the base query
+        # Build the base query - using correct 3-level taxonomy structure
         query = """
         SELECT 
-            SPLIT_PART(cc."HLTP", ' - ', 1) as category,
-            SPLIT_PART(cc."HLTP", ' - ', 2) as subcategory,
-            COALESCE(cc."3rd_level_TE", cc."2nd_level_TE", 'Other') as sub_subcategory,
+            cc."HLTP" as category,
+            cc."2nd_level_TE" as subcategory,
+            cc."3rd_level_TE" as sub_subcategory,
             COUNT(*) as count
         FROM chunk_classifications cc
         JOIN chunks c ON cc.chunk_id = c.chunk_id
         JOIN records r ON c.record_id = r.record_id
         WHERE cc.is_relevant = true 
             AND cc."HLTP" IS NOT NULL
+            AND cc."2nd_level_TE" IS NOT NULL
         """
         
         # Add filters
@@ -129,9 +130,9 @@ def fetch_category_data(
         
         query += """
         GROUP BY 
-            SPLIT_PART(cc."HLTP", ' - ', 1),
-            SPLIT_PART(cc."HLTP", ' - ', 2),
-            COALESCE(cc."3rd_level_TE", cc."2nd_level_TE", 'Other')
+            cc."HLTP",
+            cc."2nd_level_TE",
+            cc."3rd_level_TE"
         ORDER BY category, subcategory, sub_subcategory
         """
         
@@ -282,15 +283,16 @@ def fetch_search_category_data(
         
         query = f"""
         SELECT 
-            SPLIT_PART(cc."HLTP", ' - ', 1) as category,
-            SPLIT_PART(cc."HLTP", ' - ', 2) as subcategory,
-            COALESCE(cc."3rd_level_TE", cc."2nd_level_TE", 'Other') as sub_subcategory,
+            cc."HLTP" as category,
+            cc."2nd_level_TE" as subcategory,
+            cc."3rd_level_TE" as sub_subcategory,
             COUNT(*) as count
         FROM chunk_classifications cc
         JOIN chunks c ON cc.chunk_id = c.chunk_id
         JOIN records r ON c.record_id = r.record_id
         WHERE cc.is_relevant = true 
             AND cc."HLTP" IS NOT NULL
+            AND cc."2nd_level_TE" IS NOT NULL
             AND {search_condition}
         """
         
@@ -319,9 +321,9 @@ def fetch_search_category_data(
         
         query += """
         GROUP BY 
-            SPLIT_PART(cc."HLTP", ' - ', 1),
-            SPLIT_PART(cc."HLTP", ' - ', 2),
-            COALESCE(cc."3rd_level_TE", cc."2nd_level_TE", 'Other')
+            cc."HLTP",
+            cc."2nd_level_TE",
+            cc."3rd_level_TE"
         ORDER BY category, subcategory, sub_subcategory
         """
         
@@ -469,7 +471,7 @@ def fetch_timeline_data(
         query = f"""
         SELECT 
             DATE_TRUNC('{date_trunc}', r.publication_date) as period,
-            SPLIT_PART(cc."HLTP", ' - ', 1) as category,
+            cc."HLTP" as category,
             COUNT(*) as count
         FROM chunk_classifications cc
         JOIN chunks c ON cc.chunk_id = c.chunk_id
@@ -502,12 +504,12 @@ def fetch_timeline_data(
             for i, lang in enumerate(languages):
                 params[f'lang_{i}'] = lang
         
-        query += """
+        query += f"""
         GROUP BY 
             DATE_TRUNC('{date_trunc}', r.publication_date),
-            SPLIT_PART(cc."HLTP", ' - ', 1)
+            cc."HLTP"
         ORDER BY period, category
-        """.format(date_trunc=date_trunc)
+        """
         
         with engine.connect() as conn:
             df = pd.read_sql_query(text(query), conn, params=params)
@@ -544,22 +546,20 @@ def fetch_text_chunks_for_explore(
     try:
         engine = get_engine()
         
-        # Determine taxonomy level and build filter conditions
-        if ' - ' in clicked_label:
-            # This is a subcategory or sub-subcategory
-            parts = clicked_label.split(' - ')
-            if len(parts) == 2:
-                # Subcategory level
-                taxonomy_filter = 'cc."HLTP" LIKE :taxonomy_pattern'
-                taxonomy_pattern = f"{parts[0]} - {parts[1]}%"
-            else:
-                # Sub-subcategory level
-                taxonomy_filter = 'cc."HLTP" = :taxonomy_pattern'
-                taxonomy_pattern = clicked_label
+        # Determine taxonomy level and build filter conditions for 3-level structure
+        # Check if this matches a main category
+        main_categories = ['Cognitive Target Domain', 'Conceptual Foundations', 'Counter-Measures', 
+                          'Historical Dimension', 'Operational Scope', 'Related Concepts']
+        
+        if clicked_label in main_categories:
+            # Main category level
+            taxonomy_filter = 'cc."HLTP" = :taxonomy_pattern'
+            taxonomy_pattern = clicked_label
         else:
-            # This is a main category
-            taxonomy_filter = 'cc."HLTP" LIKE :taxonomy_pattern'
-            taxonomy_pattern = f"{clicked_label}%"
+            # Check if it's a subcategory or sub-subcategory
+            # For now, we'll search by exact match in 2nd or 3rd level
+            taxonomy_filter = '(cc."2nd_level_TE" = :taxonomy_pattern OR cc."3rd_level_TE" = :taxonomy_pattern)'
+            taxonomy_pattern = clicked_label
         
         query = f"""
         SELECT 
