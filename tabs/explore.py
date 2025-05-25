@@ -26,7 +26,6 @@ from database.data_fetchers import (
 from components.layout import create_filter_card, create_pagination_controls
 from utils.helpers import validate_dates, format_chunk_card
 from visualizations.sunburst import create_sunburst_chart
-from utils.cache import get_cached_or_fetch
 
 logger = logging.getLogger(__name__)
 

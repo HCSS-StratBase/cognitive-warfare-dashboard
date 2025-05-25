@@ -64,3 +64,30 @@ def get_cache_stats() -> Dict[str, Any]:
         'oldest_entry': min(_cache_timestamps.values()) if _cache_timestamps else None,
         'newest_entry': max(_cache_timestamps.values()) if _cache_timestamps else None
     }
+
+def get_cached_or_fetch(cache_key: str, fetch_func, timeout: int = 3600):
+    """
+    Get data from cache or fetch it using the provided function.
+    
+    Args:
+        cache_key: Unique key for the cache entry
+        fetch_func: Function to call if cache miss
+        timeout: Cache timeout in seconds
+        
+    Returns:
+        Any: Cached or freshly fetched data
+    """
+    # Check if result is cached and not expired
+    if cache_key in _cache:
+        timestamp = _cache_timestamps.get(cache_key, 0)
+        if time.time() - timestamp < timeout:
+            logging.debug(f"Cache hit for {cache_key}")
+            return _cache[cache_key]
+    
+    # Execute function and cache result
+    result = fetch_func()
+    _cache[cache_key] = result
+    _cache_timestamps[cache_key] = time.time()
+    logging.debug(f"Cache miss for {cache_key}, result cached")
+    
+    return result
