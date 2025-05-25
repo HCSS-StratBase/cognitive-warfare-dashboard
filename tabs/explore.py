@@ -42,6 +42,18 @@ def create_explore_tab_layout(source_options: List[Dict], min_date: str, max_dat
     Returns:
         html.Div: Complete explore tab layout
     """
+    # Get initial data for the sunburst chart exactly like RUW
+    try:
+        df_init = fetch_category_data()
+        if df_init is None or df_init.empty:
+            df_init = pd.DataFrame(columns=['category', 'subcategory', 'sub_subcategory', 'count'])
+    except Exception as e:
+        logger.error(f"Error fetching initial data for Explore tab: {e}")
+        df_init = pd.DataFrame(columns=['category', 'subcategory', 'sub_subcategory', 'count'])
+    
+    # Create initial sunburst chart exactly like RUW
+    fig_init = create_sunburst_chart(df_init, "Cognitive Warfare Taxonomy Distribution")
+    
     return html.Div([
         # Filter card exactly like RUW
         dbc.Row([
@@ -68,6 +80,7 @@ def create_explore_tab_layout(source_options: List[Dict], min_date: str, max_dat
                             html.Div([
                                 dcc.Graph(
                                     id="sunburst-chart",
+                                    figure=fig_init,
                                     config={'displayModeBar': False},
                                     style={'height': '700px'}
                                 )
