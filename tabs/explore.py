@@ -78,10 +78,6 @@ def create_explore_tab_layout(source_options: List[Dict], min_date: str, max_dat
             ])
         ]),
         
-        # Download components exactly like RUW
-        dcc.Download(id="download-dataframe-csv"),
-        dcc.Download(id="download-dataframe-json"),
-        
         # Hidden storage for clicked data
         html.Div(id="sunburst-clicked-data", style={"display": "none"}),
         
@@ -283,7 +279,7 @@ def register_explore_callbacks(app: dash.Dash) -> None:
     # Download callbacks exactly like RUW
     @app.callback(
         Output("download-dataframe-csv", "data"),
-        Input("download-csv-button", "n_clicks"),
+        Input("explore-download-csv", "n_clicks"),
         [
             State("explore-sources", "value"),
             State("explore-start-date", "date"),
@@ -304,7 +300,7 @@ def register_explore_callbacks(app: dash.Dash) -> None:
     
     @app.callback(
         Output("download-dataframe-json", "data"),
-        Input("download-json-button", "n_clicks"),
+        Input("explore-download-json", "n_clicks"),
         [
             State("explore-sources", "value"),
             State("explore-start-date", "date"),
