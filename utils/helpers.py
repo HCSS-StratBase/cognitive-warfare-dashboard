@@ -220,3 +220,101 @@ def safe_divide(numerator: float, denominator: float, default: float = 0.0) -> f
         return numerator / denominator if denominator != 0 else default
     except (TypeError, ZeroDivisionError):
         return default
+
+def validate_dates(start_date: str, end_date: str) -> tuple[str, str]:
+    """
+    Validate and format dates exactly like RUW app.
+    
+    Args:
+        start_date: Start date string
+        end_date: End date string
+        
+    Returns:
+        tuple[str, str]: Validated start and end dates
+    """
+    # Default dates matching RUW
+    default_start = "2020-01-01"
+    default_end = "2025-12-31"
+    
+    if not start_date:
+        start_date = default_start
+    if not end_date:
+        end_date = default_end
+        
+    return start_date, end_date
+
+def format_chunk_card(row: pd.Series, index: int) -> dbc.Card:
+    """
+    Format a chunk card exactly like RUW app.
+    
+    Args:
+        row: Pandas Series containing chunk data
+        index: Row index
+        
+    Returns:
+        dbc.Card: Formatted chunk card
+    """
+    # Extract data with fallbacks exactly like RUW
+    chunk_text = str(row.get('chunk_text', row.get('text', '')))
+    title = str(row.get('title', row.get('record_title', 'No title')))
+    authors = str(row.get('authors', row.get('record_authors', 'Unknown')))
+    source = str(row.get('source', row.get('original_source', 'Unknown')))
+    pub_date = str(row.get('publication_date', 'Unknown'))
+    
+    # Format taxonomy path exactly like RUW
+    hltp = row.get('HLTP', row.get('hltp', ''))
+    third_level = row.get('3rd_level_TE', row.get('third_level_te', ''))
+    second_level = row.get('2nd_level_TE', row.get('second_level_te', ''))
+    
+    taxonomy_path = hltp
+    if third_level:
+        taxonomy_path += f" → {third_level}"
+    elif second_level:
+        taxonomy_path += f" → {second_level}"
+    
+    # Truncate text exactly like RUW
+    if len(chunk_text) > 500:
+        chunk_text = chunk_text[:497] + "..."
+    
+    # Truncate title exactly like RUW
+    if len(title) > 100:
+        title = title[:97] + "..."
+    
+    # Create card with exact RUW formatting
+    return dbc.Card([
+        dbc.CardHeader([
+            html.H6(f"Chunk {index + 1}: {title}", className="mb-0")
+        ]),
+        dbc.CardBody([
+            html.P(chunk_text, 
+                   style={'fontSize': '0.9rem', 'marginBottom': '15px',
+                          'lineHeight': '1.4', 'textAlign': 'justify'}),
+            
+            dbc.Row([
+                dbc.Col([
+                    html.Strong("Authors: "), 
+                    html.Span(authors[:100] + ("..." if len(authors) > 100 else ""))
+                ], width=6),
+                dbc.Col([
+                    html.Strong("Source: "), 
+                    html.Span(source)
+                ], width=6)
+            ], className="mb-2"),
+            
+            dbc.Row([
+                dbc.Col([
+                    html.Strong("Date: "), 
+                    html.Span(pub_date)
+                ], width=6),
+                dbc.Col([
+                    html.Strong("Confidence: "), 
+                    html.Span(f"{row.get('confidence_score', 'N/A')}")
+                ], width=6)
+            ], className="mb-2"),
+            
+            html.P([
+                html.Strong("Taxonomy: "), 
+                html.Span(taxonomy_path, style={'color': '#2196F3', 'fontWeight': '500'})
+            ], className="mb-0")
+        ])
+    ], className="mb-3")

@@ -2,163 +2,197 @@
 # coding: utf-8
 
 """
-Sunburst visualization helpers for the cognitive warfare dashboard.
+Sunburst visualization for Cognitive Warfare Dashboard
+-------------------------------------------------------
+Creates sunburst charts exactly matching RUW app formatting and colors.
 """
 
 import logging
-import numpy as np
+from typing import Dict, List, Optional
+
 import pandas as pd
-import plotly.express as px
 import plotly.graph_objects as go
-from typing import Dict, List, Tuple, Optional, Any, Union
+import plotly.express as px
 
-from utils.helpers import hex_to_rgba
+logger = logging.getLogger(__name__)
 
-def process_data_for_sunburst(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, int]:
+# Exact color scheme matching RUW app
+CATEGORY_COLORS = {
+    'Conceptual Foundations': '#1f77b4',  # blue
+    'Cognitive Target Domain': '#ff7f0e',  # orange  
+    'Operational Scope': '#2ca02c',  # green
+    'Counter-Measures': '#d62728',  # red
+    'Historical Dimension': '#9467bd',  # purple
+    'Related Concepts': '#8c564b'  # brown
+}
+
+def create_sunburst_chart(df: pd.DataFrame, title: str = "Taxonomy Distribution") -> go.Figure:
     """
-    Process DataFrame for sunburst visualization.
+    Create a sunburst chart exactly matching RUW app formatting.
     
     Args:
-        df: DataFrame with category data
-        
-    Returns:
-        Tuple: (outer_counts, middle_counts, inner_counts, total_count)
-    """
-    if df.empty:
-        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), 0
-    
-    outer_counts = df.groupby(['category', 'subcategory', 'sub_subcategory'])['count'].sum().reset_index()
-    total_count = outer_counts['count'].sum()
-
-    middle_counts = outer_counts.groupby(['category', 'subcategory'])['count'].sum().reset_index()
-    middle_counts['percentage'] = (middle_counts['count'] / total_count * 100).round(2)
-
-    inner_counts = outer_counts.groupby('category')['count'].sum().reset_index()
-    inner_counts['percentage'] = (inner_counts['count'] / total_count * 100).round(2)
-
-    return outer_counts, middle_counts, inner_counts, total_count
-
-def create_color_mapping(inner_counts: pd.DataFrame, middle_counts: pd.DataFrame, outer_counts: pd.DataFrame) -> Dict[str, str]:
-    """
-    Create color mapping for cognitive warfare categories.
-    
-    Args:
-        inner_counts: DataFrame with inner counts
-        middle_counts: DataFrame with middle counts
-        outer_counts: DataFrame with outer counts
-        
-    Returns:
-        Dict[str, str]: Color mapping for all elements
-    """
-    if inner_counts.empty:
-        return {}
-    
-    # Define colors for cognitive warfare categories
-    category_colors = {
-        'Conceptual Foundations': '#1f77b4',      # Blue
-        'Cognitive Target Domain': '#ff7f0e',     # Orange  
-        'Operational Scope': '#2ca02c',          # Green
-        'Counter-Measures': '#d62728',           # Red
-        'Historical Dimension': '#9467bd',       # Purple
-        'Related Concepts': '#8c564b'            # Brown
-    }
-    
-    color_map = {}
-    
-    # Process each category
-    for idx, row in inner_counts.iterrows():
-        category = row['category']
-        base_color = category_colors.get(category, px.colors.qualitative.Set3[idx % len(px.colors.qualitative.Set3)])
-        
-        # Convert rgb to hex if needed
-        if base_color.startswith('rgb'):
-            base_color = base_color.lstrip('rgb(').rstrip(')')
-            rgb_components = [int(c.strip()) for c in base_color.split(',')]
-            base_color = f'#{rgb_components[0]:02x}{rgb_components[1]:02x}{rgb_components[2]:02x}'
-        
-        color_map[category] = base_color
-        
-        # Process subcategories with reduced alpha
-        sub_mask = middle_counts['category'] == category
-        n_subs = sub_mask.sum()
-        sub_alphas = np.linspace(0.7, 0.9, max(1, n_subs))
-        np.random.seed(42)  # Fixed seed for consistent colors
-        np.random.shuffle(sub_alphas)
-        
-        for sub_idx, (_, sub_row) in enumerate(middle_counts[sub_mask].iterrows()):
-            alpha = min(max(sub_alphas[sub_idx % len(sub_alphas)], 0.0), 1.0)
-            color_map[sub_row['subcategory']] = hex_to_rgba(base_color, alpha)
-            
-            # Process sub-subcategories with further reduced alpha
-            subsub_mask = outer_counts['subcategory'] == sub_row['subcategory']
-            n_subsubs = subsub_mask.sum()
-            subsub_alphas = np.linspace(0.4, 0.6, max(1, n_subsubs))
-            np.random.shuffle(subsub_alphas)
-            
-            for subsub_idx, (_, subsub_row) in enumerate(outer_counts[subsub_mask].iterrows()):
-                alpha = min(max(subsub_alphas[subsub_idx % len(subsub_alphas)], 0.0), 1.0)
-                color_map[subsub_row['sub_subcategory']] = hex_to_rgba(base_color, alpha)
-    
-    return color_map
-
-def create_sunburst_chart(df: pd.DataFrame, title: str = "Cognitive Warfare Taxonomy Distribution") -> go.Figure:
-    """
-    Create a sunburst chart from a DataFrame.
-    
-    Args:
-        df: DataFrame with category data
+        df: DataFrame with category, subcategory, sub_subcategory, count columns
         title: Chart title
         
     Returns:
-        go.Figure: Plotly Figure object
+        go.Figure: Configured sunburst chart
     """
-    BLUE_COLOR = "#2196F3"
-    
-    if df.empty:
-        empty_fig = go.Figure()
-        empty_fig.update_layout(
-            title={
-                'text': "No data available",
-                'font': {
-                    'size': 24,
-                    'color': BLUE_COLOR
-                },
-                'x': 0.5,
-                'y': 0.95
-            },
-            height=700,
-            width=700
-        )
-        return empty_fig
+    try:
+        if df.empty:
+            # Return empty figure with RUW styling
+            fig = go.Figure()
+            fig.add_annotation(
+                text="No data available",
+                xref="paper", yref="paper",
+                x=0.5, y=0.5,
+                showarrow=False,
+                font=dict(size=16)
+            )
+            fig.update_layout(
+                height=700,
+                showlegend=False,
+                paper_bgcolor='white',
+                plot_bgcolor='white',
+                title=dict(text=title, x=0.5, font=dict(size=16))
+            )
+            return fig
         
-    outer_counts, middle_counts, inner_counts, _ = process_data_for_sunburst(df)
-    color_map = create_color_mapping(inner_counts, middle_counts, outer_counts)
+        # Prepare data for sunburst exactly like RUW
+        ids = []
+        labels = []
+        parents = []
+        values = []
+        colors = []
+        
+        # Add root
+        ids.append("root")
+        labels.append("Total")
+        parents.append("")
+        values.append(df['count'].sum())
+        colors.append('#13376f')  # RUW theme color
+        
+        # Add categories (level 1)
+        category_totals = df.groupby('category')['count'].sum()
+        for category in category_totals.index:
+            ids.append(category)
+            labels.append(category)
+            parents.append("root")
+            values.append(category_totals[category])
+            # Use exact RUW colors
+            colors.append(CATEGORY_COLORS.get(category, '#13376f'))
+        
+        # Add subcategories (level 2) 
+        subcategory_data = df.groupby(['category', 'subcategory'])['count'].sum().reset_index()
+        for _, row in subcategory_data.iterrows():
+            if pd.notna(row['subcategory']) and row['subcategory'] != '':
+                subcategory_id = f"{row['category']} - {row['subcategory']}"
+                ids.append(subcategory_id)
+                labels.append(row['subcategory'])
+                parents.append(row['category'])
+                values.append(row['count'])
+                # Lighter shade of parent category color
+                base_color = CATEGORY_COLORS.get(row['category'], '#13376f')
+                colors.append(base_color + '80')  # Add transparency like RUW
+        
+        # Add sub-subcategories (level 3)
+        for _, row in df.iterrows():
+            if pd.notna(row['sub_subcategory']) and row['sub_subcategory'] != '' and row['sub_subcategory'] != 'Other':
+                sub_subcategory_id = f"{row['category']} - {row['subcategory']} - {row['sub_subcategory']}"
+                parent_id = f"{row['category']} - {row['subcategory']}" if pd.notna(row['subcategory']) else row['category']
+                
+                ids.append(sub_subcategory_id)
+                labels.append(row['sub_subcategory'])
+                parents.append(parent_id)
+                values.append(row['count'])
+                # Even lighter shade
+                base_color = CATEGORY_COLORS.get(row['category'], '#13376f')
+                colors.append(base_color + '60')  # More transparency like RUW
+        
+        # Create sunburst with exact RUW configuration
+        fig = go.Figure(go.Sunburst(
+            ids=ids,
+            labels=labels,
+            parents=parents,
+            values=values,
+            branchvalues="total",
+            marker=dict(
+                colors=colors,
+                line=dict(color="white", width=2)
+            ),
+            hovertemplate='<b>%{label}</b><br>Count: %{value}<br>Percentage: %{percentParent}<extra></extra>',
+            maxdepth=3
+        ))
+        
+        # Update layout to match RUW exactly
+        fig.update_layout(
+            title=dict(
+                text=title,
+                x=0.5,
+                font=dict(size=18, color='#13376f')
+            ),
+            height=700,
+            font=dict(size=12),
+            paper_bgcolor='white',
+            plot_bgcolor='white',
+            margin=dict(t=60, l=0, r=0, b=0)
+        )
+        
+        logger.info(f"Created sunburst chart with {len(df)} data points")
+        return fig
+        
+    except Exception as e:
+        logger.error(f"Error creating sunburst chart: {e}")
+        # Return error figure
+        fig = go.Figure()
+        fig.add_annotation(
+            text=f"Error creating chart: {str(e)}",
+            xref="paper", yref="paper",
+            x=0.5, y=0.5,
+            showarrow=False,
+            font=dict(size=14, color="red")
+        )
+        fig.update_layout(
+            height=700,
+            showlegend=False,
+            paper_bgcolor='white',
+            plot_bgcolor='white'
+        )
+        return fig
+
+
+def get_sunburst_drill_down_data(df: pd.DataFrame, selected_path: str) -> pd.DataFrame:
+    """
+    Get filtered data for sunburst drill-down exactly like RUW.
     
-    fig = px.sunburst(
-        outer_counts,
-        path=['category', 'subcategory', 'sub_subcategory'],
-        values='count',
-        color='category',
-        color_discrete_map=color_map
-    )
-    
-    fig.update_layout(
-        margin=dict(t=50, l=10, r=10, b=10),
-        height=700,
-        width=700,
-        title={
-            'text': title,
-            'font': {
-                'size': 24,
-                'color': BLUE_COLOR
-            },
-            'x': 0.5,
-            'y': 0.98
-        }
-    )
-    
-    fig.update_traces(
-        hovertemplate='<b>%{label}</b><br>Count: %{value:,}<br>Percentage: %{percentRoot:.2f}%'
-    )
-    
-    return fig
+    Args:
+        df: Original dataframe
+        selected_path: Selected path from sunburst click
+        
+    Returns:
+        pd.DataFrame: Filtered dataframe for the selected segment
+    """
+    try:
+        if not selected_path or selected_path == "Total":
+            return df
+        
+        # Parse the hierarchical path
+        path_parts = selected_path.split(' - ')
+        
+        if len(path_parts) == 1:
+            # Category level
+            return df[df['category'] == path_parts[0]]
+        elif len(path_parts) == 2:
+            # Subcategory level
+            return df[(df['category'] == path_parts[0]) & 
+                     (df['subcategory'] == path_parts[1])]
+        elif len(path_parts) == 3:
+            # Sub-subcategory level
+            return df[(df['category'] == path_parts[0]) & 
+                     (df['subcategory'] == path_parts[1]) &
+                     (df['sub_subcategory'] == path_parts[2])]
+        
+        return df
+        
+    except Exception as e:
+        logger.error(f"Error in sunburst drill-down: {e}")
+        return df

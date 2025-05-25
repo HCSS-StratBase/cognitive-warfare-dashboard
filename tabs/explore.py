@@ -2,333 +2,340 @@
 # coding: utf-8
 
 """
-Explore tab layout and callbacks for the cognitive warfare dashboard.
-This tab provides exploration of the data via a sunburst chart and detailed view of text chunks.
+Explore Tab for Cognitive Warfare Dashboard
+---------------------------------------------
+This tab provides an interactive sunburst visualization for exploring
+the cognitive warfare taxonomy with drill-down capabilities exactly like RUW app.
 """
 
 import logging
-from datetime import datetime
-from typing import Dict, List, Optional, Union, Any
+from typing import List, Dict, Any, Optional, Tuple
 
 import pandas as pd
 import dash
-from dash import html, dcc
-from dash.dependencies import Input, Output, State
+from dash import html, dcc, callback, Input, Output, State, ALL
 import dash_bootstrap_components as dbc
+import plotly.express as px
 import plotly.graph_objects as go
 
-from database.data_fetchers import fetch_category_data, fetch_text_chunks
-from components.layout import create_filter_card, create_pagination_controls, create_download_buttons
-from utils.helpers import format_chunk_row, get_unique_filename
+from database.data_fetchers import (
+    fetch_category_data,
+    fetch_text_chunks_for_explore,
+    fetch_chunk_text_for_chunk_ids
+)
+from components.layout import create_filter_card, create_pagination_controls
+from utils.helpers import validate_dates, format_chunk_card
 from visualizations.sunburst import create_sunburst_chart
+from utils.cache import get_cached_or_fetch
 
-def create_explore_tab_layout(source_options: List, min_date: datetime = None, max_date: datetime = None) -> html.Div:
+logger = logging.getLogger(__name__)
+
+
+def create_explore_tab_layout(source_options: List[Dict], min_date: str, max_date: str) -> html.Div:
     """
-    Create the Explore tab layout.
+    Create the layout for the Explore tab exactly matching RUW app structure.
     
     Args:
-        source_options: Source options for filters
-        min_date: Minimum date for filters
-        max_date: Maximum date for filters
+        source_options: List of source options for dropdown
+        min_date: Minimum date for date picker
+        max_date: Maximum date for date picker
         
     Returns:
-        html.Div: Explore tab layout
+        html.Div: Complete explore tab layout
     """
-    # Try to get initial data for the sunburst chart
-    try:
-        df_init = fetch_category_data()
-        if df_init is None or df_init.empty:
-            df_init = pd.DataFrame(columns=['category', 'subcategory', 'sub_subcategory', 'count'])
-    except Exception as e:
-        logging.error(f"Error fetching initial data for Explore tab: {e}")
-        df_init = pd.DataFrame(columns=['category', 'subcategory', 'sub_subcategory', 'count'])
-    
-    explore_tab_layout = html.Div([
-        # Filter card
-        create_filter_card(
-            id_prefix="explore",
-            source_options=source_options,
-            min_date=min_date,
-            max_date=max_date
-        ),
+    return html.Div([
+        # Filter card exactly like RUW
+        dbc.Row([
+            dbc.Col([
+                create_filter_card(
+                    "explore",
+                    source_options,
+                    min_date,
+                    max_date
+                )
+            ], width=12)
+        ], className="mb-3"),
         
-        # Results container
-        html.Div(id="explore-results-container", children=[
-            # Initial sunburst chart
+        # Main content area - exactly matching RUW structure
+        html.Div(id="explore-content", children=[
+            # Initial sunburst visualization with exact RUW styling
             dbc.Row([
                 dbc.Col([
-                    html.Div([
-                        dcc.Graph(
-                            id="explore-sunburst-chart",
-                            figure=create_sunburst_chart(df_init),
-                            config={'displayModeBar': False}
-                        )
-                    ], className="sunburst-container")
+                    dbc.Card([
+                        dbc.CardHeader([
+                            html.H5("Cognitive Warfare Taxonomy Distribution", className="mb-0")
+                        ]),
+                        dbc.CardBody([
+                            html.Div([
+                                dcc.Graph(
+                                    id="sunburst-chart",
+                                    config={'displayModeBar': False},
+                                    style={'height': '700px'}
+                                )
+                            ], className="sunburst-container")
+                        ])
+                    ], className="shadow-sm")
                 ], width=12)
-            ]),
-            
-            # Selection info
-            html.Div(id="explore-selection-info", children=[
-                html.P("Click on a segment in the sunburst chart to explore text chunks.", 
-                       className="text-center text-muted", style={'marginTop': '20px'})
             ])
-        ])
+        ]),
+        
+        # Download components exactly like RUW
+        dcc.Download(id="download-dataframe-csv"),
+        dcc.Download(id="download-dataframe-json"),
+        
+        # Hidden storage for clicked data
+        html.Div(id="sunburst-clicked-data", style={"display": "none"}),
+        
+        # Loading component
+        dcc.Loading(
+            id="explore-loading",
+            type="default",
+            children=html.Div(id="explore-loading-output")
+        )
     ])
-    
-    return explore_tab_layout
 
-def register_explore_callbacks(app):
-    """Register callbacks for the Explore tab."""
+
+def register_explore_callbacks(app: dash.Dash) -> None:
+    """
+    Register all callbacks for the Explore tab exactly matching RUW app.
+    
+    Args:
+        app: Dash application instance
+    """
     
     @app.callback(
+        Output("sunburst-chart", "figure"),
         [
-            Output("explore-sunburst-chart", "figure"),
-            Output("explore-selection-info", "children")
+            Input("explore-apply-filters", "n_clicks")
         ],
-        [Input("explore-filter-button", "n_clicks")],
         [
-            State("explore-source-dropdown", "value"),
-            State("explore-date-range", "start_date"),
-            State("explore-date-range", "end_date"),
-            State("explore-language-dropdown", "value")
+            State("explore-sources", "value"),
+            State("explore-start-date", "date"),
+            State("explore-end-date", "date"),
+            State("explore-languages", "value")
+        ],
+        prevent_initial_call=False
+    )
+    def update_sunburst_chart(n_clicks, sources, start_date, end_date, languages):
+        """
+        Update the sunburst chart based on filter selections - using ALL corpus data.
+        """
+        try:
+            # Validate and format dates
+            start_date, end_date = validate_dates(start_date, end_date)
+            
+            # Get ALL category data from entire corpus
+            df = fetch_category_data(sources, start_date, end_date, languages)
+            
+            if df.empty:
+                # Return empty chart with RUW styling
+                fig = go.Figure()
+                fig.add_annotation(
+                    text="No data available for the selected filters",
+                    xref="paper", yref="paper",
+                    x=0.5, y=0.5, 
+                    showarrow=False,
+                    font=dict(size=16)
+                )
+                fig.update_layout(
+                    height=700,
+                    showlegend=False,
+                    paper_bgcolor='white',
+                    plot_bgcolor='white'
+                )
+                return fig
+            
+            # Create sunburst chart with exact RUW formatting
+            fig = create_sunburst_chart(df, "Cognitive Warfare Taxonomy Distribution")
+            logger.info(f"Fetched category data: {len(df)} rows from entire corpus")
+            
+            return fig
+            
+        except Exception as e:
+            logger.error(f"Error updating sunburst chart: {e}")
+            # Return error figure with RUW styling
+            fig = go.Figure()
+            fig.add_annotation(
+                text=f"Error loading data: {str(e)}",
+                xref="paper", yref="paper",
+                x=0.5, y=0.5,
+                showarrow=False,
+                font=dict(size=14, color="red")
+            )
+            fig.update_layout(
+                height=700,
+                showlegend=False,
+                paper_bgcolor='white',
+                plot_bgcolor='white'
+            )
+            return fig
+
+    @app.callback(
+        Output("explore-content", "children"),
+        [
+            Input("sunburst-chart", "clickData")
+        ],
+        [
+            State("explore-sources", "value"),
+            State("explore-start-date", "date"),
+            State("explore-end-date", "date"),
+            State("explore-languages", "value")
         ],
         prevent_initial_call=True
     )
-    def update_explore_chart(n_clicks, selected_sources, start_date, end_date, selected_languages):
-        """Update the sunburst chart based on filters."""
-        if not n_clicks:
-            return dash.no_update, dash.no_update
-        
+    def handle_sunburst_click(click_data, sources, start_date, end_date, languages):
+        """
+        Handle clicks on sunburst chart to show text chunks - exactly like RUW app.
+        """
+        if not click_data:
+            return dash.no_update
+            
         try:
-            # Convert date strings to date objects
-            start_date = datetime.strptime(start_date, '%Y-%m-%d').date() if start_date else None
-            end_date = datetime.strptime(end_date, '%Y-%m-%d').date() if end_date else None
+            # Extract clicked category information exactly like RUW
+            point = click_data['points'][0]
+            clicked_label = point.get('label', '')
             
-            # Fetch filtered data
-            df = fetch_category_data(
-                sources=selected_sources,
-                start_date=start_date,
-                end_date=end_date,
-                languages=selected_languages
-            )
+            if not clicked_label:
+                return dash.no_update
             
-            # Create sunburst chart
-            fig = create_sunburst_chart(df, "Cognitive Warfare Taxonomy Distribution")
+            # Validate dates
+            start_date, end_date = validate_dates(start_date, end_date)
             
-            # Create selection info
-            total_count = df['count'].sum() if not df.empty else 0
-            info = html.Div([
-                html.H5(f"Total Classifications: {total_count:,}", className="selection-title"),
-                html.P("Click on a segment to explore the corresponding text chunks.", 
-                       className="text-center text-muted")
-            ])
-            
-            return fig, info
-            
-        except Exception as e:
-            logging.error(f"Error updating explore chart: {e}")
-            return dash.no_update, html.Div([
-                html.P("Error loading data. Please try again.", className="text-danger text-center")
-            ])
-    
-    @app.callback(
-        Output("explore-results-container", "children"),
-        [Input("explore-sunburst-chart", "clickData")],
-        [
-            State("explore-source-dropdown", "value"),
-            State("explore-date-range", "start_date"),
-            State("explore-date-range", "end_date"),
-            State("explore-language-dropdown", "value"),
-            State("explore-sunburst-chart", "figure")
-        ]
-    )
-    def show_chunk_details(clickData, selected_sources, start_date, end_date, selected_languages, current_figure):
-        """Show detailed text chunks when sunburst segment is clicked."""
-        if not clickData:
-            # Return to initial state
-            return [
-                dbc.Row([
-                    dbc.Col([
-                        html.Div([
-                            dcc.Graph(
-                                id="explore-sunburst-chart",
-                                figure=current_figure,
-                                config={'displayModeBar': False}
-                            )
-                        ], className="sunburst-container")
-                    ], width=12)
-                ]),
-                html.Div(id="explore-selection-info", children=[
-                    html.P("Click on a segment in the sunburst chart to explore text chunks.", 
-                           className="text-center text-muted", style={'marginTop': '20px'})
-                ])
-            ]
-        
-        try:
-            # Extract clicked data
-            point = clickData['points'][0]
-            label = point.get('label', '')
-            
-            # Parse the hierarchical path
-            # The sunburst provides the full path in the id or currentPath
-            if 'currentPath' in point:
-                path_parts = point['currentPath'].split('/')
-            else:
-                path_parts = [label]
-            
-            # Determine category, subcategory, sub_subcategory from path
-            category = path_parts[0] if len(path_parts) > 0 else None
-            subcategory = path_parts[1] if len(path_parts) > 1 else None
-            sub_subcategory = path_parts[2] if len(path_parts) > 2 else None
-            
-            # Convert date strings to date objects
-            start_date = datetime.strptime(start_date, '%Y-%m-%d').date() if start_date else None
-            end_date = datetime.strptime(end_date, '%Y-%m-%d').date() if end_date else None
-            
-            # Fetch text chunks for the selected segment
-            chunks_df = fetch_text_chunks(
-                category=category,
-                subcategory=subcategory,
-                sub_subcategory=sub_subcategory,
-                sources=selected_sources,
-                start_date=start_date,
-                end_date=end_date,
-                languages=selected_languages,
-                limit=50
-            )
-            
-            # Create back button and results
-            back_button = dbc.Button(
-                "← Back to Sunburst",
-                id="explore-back-button",
-                color="secondary",
-                className="mb-3"
+            # Fetch ALL text chunks for the clicked category from entire corpus
+            chunks_df = fetch_text_chunks_for_explore(
+                clicked_label, sources, start_date, end_date, languages
             )
             
             if chunks_df.empty:
-                results_content = [
-                    back_button,
-                    html.H4(f"Selected: {label}", className="selection-title"),
-                    html.P("No text chunks found for this selection.", className="text-center text-muted")
-                ]
-            else:
-                # Format chunks for display
-                chunk_cards = []
-                for idx, row in chunks_df.head(20).iterrows():  # Show first 20 chunks
-                    chunk_cards.append(format_chunk_row(row, idx))
-                
-                results_content = [
-                    back_button,
-                    html.H4(f"Selected: {label}", className="selection-title"),
-                    html.P(f"Showing {min(len(chunks_df), 20)} of {len(chunks_df)} text chunks", 
-                           className="text-center text-muted mb-3"),
-                    create_download_buttons("explore"),
-                    html.Div(chunk_cards)
+                return [
+                    dbc.Alert(
+                        f"No text chunks found for category: {clicked_label}",
+                        color="info",
+                        className="mt-3"
+                    ),
+                    create_back_button()
                 ]
             
-            return results_content
+            # Create chunk cards with exact RUW formatting
+            chunk_cards = []
+            for idx, row in chunks_df.head(50).iterrows():
+                card = format_chunk_card(row, idx)
+                chunk_cards.append(card)
+            
+            return [
+                dbc.Row([
+                    dbc.Col([
+                        html.H4(f"Text Chunks for: {clicked_label}", className="selection-title"),
+                        html.P(f"Showing {min(len(chunks_df), 50)} of {len(chunks_df)} chunks", 
+                               className="text-muted")
+                    ], width=10),
+                    dbc.Col([
+                        create_back_button()
+                    ], width=2, className="text-right")
+                ], className="mb-3"),
+                html.Div(chunk_cards, className="mt-3")
+            ]
             
         except Exception as e:
-            logging.error(f"Error showing chunk details: {e}")
+            logger.error(f"Error handling sunburst click: {e}")
             return [
-                html.P("Error loading chunk details. Please try again.", 
-                       className="text-danger text-center")
+                dbc.Alert(
+                    f"Error loading chunks: {str(e)}",
+                    color="danger",
+                    className="mt-3"
+                ),
+                create_back_button()
             ]
-    
+
     @app.callback(
-        Output("explore-results-container", "children", allow_duplicate=True),
-        [Input("explore-back-button", "n_clicks")],
-        [State("explore-sunburst-chart", "figure")],
-        prevent_initial_call=True
-    )
-    def go_back_to_sunburst(n_clicks, current_figure):
-        """Handle back button click to return to sunburst view."""
-        if not n_clicks:
-            return dash.no_update
-        
-        return [
-            dbc.Row([
-                dbc.Col([
-                    html.Div([
-                        dcc.Graph(
-                            id="explore-sunburst-chart",
-                            figure=current_figure,
-                            config={'displayModeBar': False}
-                        )
-                    ], className="sunburst-container")
-                ], width=12)
-            ]),
-            html.Div(id="explore-selection-info", children=[
-                html.P("Click on a segment in the sunburst chart to explore text chunks.", 
-                       className="text-center text-muted", style={'marginTop': '20px'})
-            ])
-        ]
-    
-    # Download callbacks
-    @app.callback(
-        Output("download-dataframe-csv", "data"),
-        [Input("explore-download-csv", "n_clicks")],
+        Output("explore-content", "children", allow_duplicate=True),
         [
-            State("explore-source-dropdown", "value"),
-            State("explore-date-range", "start_date"),
-            State("explore-date-range", "end_date"),
-            State("explore-language-dropdown", "value")
+            Input("back-to-sunburst", "n_clicks")
         ],
         prevent_initial_call=True
     )
-    def download_explore_csv(n_clicks, selected_sources, start_date, end_date, selected_languages):
-        """Download explore data as CSV."""
-        if not n_clicks:
-            return dash.no_update
-        
-        try:
-            start_date = datetime.strptime(start_date, '%Y-%m-%d').date() if start_date else None
-            end_date = datetime.strptime(end_date, '%Y-%m-%d').date() if end_date else None
-            
-            df = fetch_category_data(
-                sources=selected_sources,
-                start_date=start_date,
-                end_date=end_date,
-                languages=selected_languages
-            )
-            
-            filename = get_unique_filename("cognitive_warfare_explore", "csv")
-            return dcc.send_data_frame(df.to_csv, filename, index=False)
-            
-        except Exception as e:
-            logging.error(f"Error downloading CSV: {e}")
-            return dash.no_update
+    def back_to_sunburst(n_clicks):
+        """
+        Return to main sunburst view exactly like RUW app.
+        """
+        if n_clicks:
+            return [
+                dbc.Row([
+                    dbc.Col([
+                        dbc.Card([
+                            dbc.CardHeader([
+                                html.H5("Cognitive Warfare Taxonomy Distribution", className="mb-0")
+                            ]),
+                            dbc.CardBody([
+                                html.Div([
+                                    dcc.Graph(
+                                        id="sunburst-chart",
+                                        config={'displayModeBar': False},
+                                        style={'height': '700px'}
+                                    )
+                                ], className="sunburst-container")
+                            ])
+                        ], className="shadow-sm")
+                    ], width=12)
+                ])
+            ]
+        return dash.no_update
+    
+    # Download callbacks exactly like RUW
+    @app.callback(
+        Output("download-dataframe-csv", "data"),
+        Input("download-csv-button", "n_clicks"),
+        [
+            State("explore-sources", "value"),
+            State("explore-start-date", "date"),
+            State("explore-end-date", "date"),
+            State("explore-languages", "value")
+        ],
+        prevent_initial_call=True
+    )
+    def download_csv(n_clicks, sources, start_date, end_date, languages):
+        if n_clicks:
+            try:
+                start_date, end_date = validate_dates(start_date, end_date)
+                df = fetch_category_data(sources, start_date, end_date, languages)
+                return dcc.send_data_frame(df.to_csv, "cognitive_warfare_taxonomy.csv", index=False)
+            except Exception as e:
+                logger.error(f"Error downloading CSV: {e}")
+        return dash.no_update
     
     @app.callback(
         Output("download-dataframe-json", "data"),
-        [Input("explore-download-json", "n_clicks")],
+        Input("download-json-button", "n_clicks"),
         [
-            State("explore-source-dropdown", "value"),
-            State("explore-date-range", "start_date"),
-            State("explore-date-range", "end_date"),
-            State("explore-language-dropdown", "value")
+            State("explore-sources", "value"),
+            State("explore-start-date", "date"),
+            State("explore-end-date", "date"),
+            State("explore-languages", "value")
         ],
         prevent_initial_call=True
     )
-    def download_explore_json(n_clicks, selected_sources, start_date, end_date, selected_languages):
-        """Download explore data as JSON."""
-        if not n_clicks:
-            return dash.no_update
-        
-        try:
-            start_date = datetime.strptime(start_date, '%Y-%m-%d').date() if start_date else None
-            end_date = datetime.strptime(end_date, '%Y-%m-%d').date() if end_date else None
-            
-            df = fetch_category_data(
-                sources=selected_sources,
-                start_date=start_date,
-                end_date=end_date,
-                languages=selected_languages
-            )
-            
-            filename = get_unique_filename("cognitive_warfare_explore", "json")
-            return dcc.send_data_frame(df.to_json, filename, orient='records', indent=2)
-            
-        except Exception as e:
-            logging.error(f"Error downloading JSON: {e}")
-            return dash.no_update
+    def download_json(n_clicks, sources, start_date, end_date, languages):
+        if n_clicks:
+            try:
+                start_date, end_date = validate_dates(start_date, end_date)
+                df = fetch_category_data(sources, start_date, end_date, languages)
+                return dcc.send_data_frame(df.to_json, "cognitive_warfare_taxonomy.json", orient="records")
+            except Exception as e:
+                logger.error(f"Error downloading JSON: {e}")
+        return dash.no_update
+
+
+def create_back_button() -> dbc.Button:
+    """
+    Create a back button exactly like RUW app.
+    
+    Returns:
+        dbc.Button: Back button component
+    """
+    return dbc.Button(
+        "← Back to Overview",
+        id="back-to-sunburst",
+        color="primary",
+        className="mb-3",
+        size="sm"
+    )
